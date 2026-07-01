@@ -1,0 +1,87 @@
+# DeepSeek-V4-Flash | B300 | Aggregated | MTP off (stp)
+# DEP = Data + Expert Parallel: TP=DP=EP={n} + dp-attention.
+# Max-throughput band: all-gather EP via flashinfer_mxfp4 (H200/Hopper), high concurrency.
+# Tuning from dsv4_fp4_b300_sglang.sh high-conc blocks (flashinfer_mxfp4 all-gather EP + dp-attention).
+# Sweeps DEP in {2,4,8}.
+name: "dsv4flash-b300-agg-stp-dep-maxtpt-1k1k"
+
+slurm:
+  time_limit: "4:00:00"
+
+sbatch_directives:
+  mem: "0"
+srun_options:
+  mem: "0"
+
+health_check:
+  max_attempts: 360
+  interval_seconds: 10
+
+model:
+  path: "dsv4-flash"
+  container: "dsv4-flash-h200"
+  precision: "fp4"
+
+frontend:
+  type: sglang
+  args:
+    worker-startup-timeout-secs: 3600
+    worker-startup-check-interval: 10
+
+resources:
+  gpu_type: "b300"
+  gpus_per_node: 8
+  agg_nodes: 1
+  agg_workers: 1
+  gpus_per_agg: "{n}"
+
+backend:
+  type: sglang
+
+  aggregated_environment:
+    PYTHONUNBUFFERED: "1"
+    #SGLANG_JIT_DEEPGEMM_PRECOMPILE: "0"
+    SGLANG_OPT_SWA_SPLIT_LEAF_ON_INSERT: "1"
+    SGLANG_OPT_SWA_EVICT_DROP_PAGE_MARGIN: "1"
+    SGLANG_OPT_SWA_RELEASE_LEAF_LOCK_AFTER_WINDOW: "1"
+
+  sglang_config:
+    aggregated:
+      served-model-name: "deepseek-ai/DeepSeek-V4-Flash"
+      model-path: "/model/"
+      trust-remote-code: true
+
+      # DEP{n}: TP=DP=EP={n} + dp-attention
+      tensor-parallel-size: "{n}"
+      data-parallel-size: "{n}"
+      expert-parallel-size: "{n}"
+      enable-dp-attention: true
+      enable-dp-lm-head: true
+
+      moe-a2a-backend: "none"               # H200: all-gather EP (no DeepEP all-to-all)
+      moe-runner-backend: "flashinfer_mxfp4"  # Hopper-capable fp4 (cutlass mixed-input); supports EP sharding
+      disable-flashinfer-autotune: true   # autotune dummy-run IMAs in DSv4 indexer on H200; disable (matches TP recipe)
+      chunked-prefill-size: 16384
+
+      mem-fraction-static: 0.85
+      swa-full-tokens-ratio: 0.1
+      context-length: 2200
+      cuda-graph-max-bs: 2048
+      max-running-requests: 8192
+      disable-radix-cache: true
+      decode-log-interval: 5
+      stream-interval: 50
+
+benchmark:
+  type: "sa-bench"
+  isl: 1024
+  osl: 1024
+  random_range_ratio: 0.8
+  concurrencies: "{conc}"
+  req_rate: "inf"
+  use_chat_template: false
+
+sweep:
+  n: [2]
+  conc: ["512x1024", "2048"]
+

@@ -1,0 +1,76 @@
+# DeepSeek-V4-Flash | B300 | Aggregated | MTP off (stp) | 8k1k
+# Pure Tensor Parallel, low-latency band (flashinfer_mxfp4, low concurrency).
+# Sweeps TP in {1,2,4,8}.  B300 x86 -> no *MNNVL* env.
+name: "dsv4flash-b300-agg-stp-tp-lowlat-8k1k"
+
+slurm:
+  time_limit: "4:00:00"
+
+sbatch_directives:
+  mem: "0"
+srun_options:
+  mem: "0"
+
+health_check:
+  max_attempts: 360
+  interval_seconds: 10
+
+model:
+  path: "dsv4-flash"
+  container: "dsv4-flash-h200"
+  precision: "fp4"
+
+frontend:
+  type: sglang
+  args:
+    worker-startup-timeout-secs: 3600
+    worker-startup-check-interval: 10
+
+resources:
+  gpu_type: "b300"
+  gpus_per_node: 8
+  agg_nodes: 1
+  agg_workers: 1
+  gpus_per_agg: "{n}"
+
+backend:
+  type: sglang
+
+  aggregated_environment:
+    PYTHONUNBUFFERED: "1"
+    #SGLANG_JIT_DEEPGEMM_PRECOMPILE: "0"
+    SGLANG_OPT_SWA_SPLIT_LEAF_ON_INSERT: "1"
+
+  sglang_config:
+    aggregated:
+      served-model-name: "deepseek-ai/DeepSeek-V4-Flash"
+      model-path: "/model/"
+      trust-remote-code: true
+
+      tensor-parallel-size: "{n}"
+
+      moe-runner-backend: "flashinfer_mxfp4"
+      disable-flashinfer-autotune: true
+      chunked-prefill-size: 8192
+
+      mem-fraction-static: 0.9
+      swa-full-tokens-ratio: 0.1
+      context-length: 9728
+      cuda-graph-max-bs: 1024
+      max-running-requests: 1024
+      disable-radix-cache: true
+      decode-log-interval: 1
+      stream-interval: 50
+
+benchmark:
+  type: "sa-bench"
+  isl: 8192
+  osl: 1024
+  random_range_ratio: 0.8
+  concurrencies: "1x2x4x8x16x32x64x128"
+  req_rate: "inf"
+  use_chat_template: false
+
+sweep:
+  n: [2, 4, 8]
+
